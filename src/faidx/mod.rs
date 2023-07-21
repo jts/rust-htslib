@@ -8,6 +8,7 @@
 //!
 
 use std::ffi;
+use std::ffi::c_void;
 use std::path::Path;
 use url::Url;
 
@@ -53,36 +54,6 @@ impl Reader {
         Ok(Self { inner })
     }
 
-    /// Fetch the sequence as a byte array.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - the name of the template sequence (e.g., "chr1")
-    /// * `begin` - the offset within the template sequence (starting with 0)
-    /// * `end` - the end position to return (if smaller than `begin`, the behavior is undefined).
-    pub fn fetch_seq<N: AsRef<str>>(&self, name: N, begin: usize, end: usize) -> Result<&[u8]> {
-        if begin > std::i64::MAX as usize {
-            return Err(Error::FaidxPositionTooLarge);
-        }
-        if end > std::i64::MAX as usize {
-            return Err(Error::FaidxPositionTooLarge);
-        }
-        let cname = ffi::CString::new(name.as_ref().as_bytes()).unwrap();
-        let len_out: i64 = 0;
-        let cseq = unsafe {
-            let ptr = htslib::faidx_fetch_seq64(
-                self.inner,                          //*const faidx_t,
-                cname.as_ptr(),                      // c_name
-                begin as htslib::hts_pos_t,          // p_beg_i
-                end as htslib::hts_pos_t,            // p_end_i
-                &mut (len_out as htslib::hts_pos_t), //len
-            );
-            ffi::CStr::from_ptr(ptr)
-        };
-
-        Ok(cseq.to_bytes())
-    }
-
     /// Fetches the sequence and returns it as string.
     ///
     /// # Arguments
@@ -96,8 +67,29 @@ impl Reader {
         begin: usize,
         end: usize,
     ) -> Result<String> {
-        let bytes = self.fetch_seq(name, begin, end)?;
-        Ok(std::str::from_utf8(bytes).unwrap().to_owned())
+        if begin > std::i64::MAX as usize {
+            return Err(Error::FaidxPositionTooLarge);
+        }
+        if end > std::i64::MAX as usize {
+            return Err(Error::FaidxPositionTooLarge);
+        }
+        let cname = ffi::CString::new(name.as_ref().as_bytes()).unwrap();
+        let len_out: i64 = 0;
+        let s = unsafe {
+            let ptr = htslib::faidx_fetch_seq64(
+                self.inner,                          //*const faidx_t,
+                cname.as_ptr(),                      // c_name
+                begin as htslib::hts_pos_t,          // p_beg_i
+                end as htslib::hts_pos_t,            // p_end_i
+                &mut (len_out as htslib::hts_pos_t), //len
+            );
+            let cstr = ffi::CStr::from_ptr(ptr);
+            let s = String::from_utf8_lossy(cstr.to_bytes()).to_string();
+            libc::free(ptr as *mut c_void);
+            s
+        };
+
+        Ok(s)
     }
 
     /// Fetches the number of sequences in the fai index
